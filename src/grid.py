@@ -12,9 +12,15 @@ class GridGenerator:
         self.image_path = None
         self.original_image = None
         self.binarized_image = None  # To store the binarized image
+        self.textured_image = None # To store the textured image
         self.display_image = None
         self.grid_cells = 10  # Default number of grid cells
         self.grid_shape = "Square"  # Default grid shape
+
+        # --- Selection Rectangle ---
+        self.selection_rect = None
+        self.selection_start_x = 0
+        self.selection_start_y = 0
 
         # --- UI Elements ---
 
@@ -32,9 +38,18 @@ class GridGenerator:
         self.invert_checkbox = tk.Checkbutton(self.top_frame, text="Invert Binarization", var=self.invert_var, command=self.binarize_image)
         self.invert_checkbox.pack(side=tk.LEFT, padx=5)
 
+        self.texture_button = tk.Button(self.top_frame, text="Generate Textures", command=self.generate_textures)
+        self.texture_button.pack(side=tk.LEFT, padx=5)
+
+        self.rules_button = tk.Button(self.top_frame, text="Apply Rules", command=self.apply_rules)
+        self.rules_button.pack(side=tk.LEFT, padx=5)
+
         # Canvas for displaying the image and grid
         self.canvas = tk.Canvas(master, bg="white")
         self.canvas.pack(expand=True, fill="both")
+        self.canvas.bind("<ButtonPress-1>", self.on_mouse_press)
+        self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_mouse_release)
 
         # Frame for grid controls
         self.control_frame = tk.Frame(master)
@@ -101,11 +116,78 @@ class GridGenerator:
             # Update the canvas to show the binarized image
             self.update_grid()
 
+    def generate_textures(self):
+        """Generates textures for the binarized image."""
+        if self.binarized_image:
+            # Convert the binarized image to a color image
+            color_image = cv2.cvtColor(np.array(self.binarized_image), cv2.COLOR_GRAY2RGB)
+
+            # Define colors for land and water
+            land_color = [0, 255, 0]  # Green
+            water_color = [255, 0, 0]  # Blue
+
+            # Create a mask for land (white pixels in the binarized image)
+            land_mask = np.all(color_image == [255, 255, 255], axis=-1)
+
+            # Apply colors to the image
+            color_image[land_mask] = land_color
+            color_image[~land_mask] = water_color
+
+            # Convert back to PIL image
+            self.textured_image = Image.fromarray(color_image)
+
+            # Update the canvas to show the textured image
+            self.update_grid()
+
+    def apply_rules(self):
+        """Applies rules to the textured image."""
+        if self.textured_image:
+            # Convert the textured image to an array
+            image_array = np.array(self.textured_image)
+
+            # Define colors
+            land_color = [0, 255, 0]  # Green
+            water_color = [255, 0, 0]  # Blue
+            beach_color = [0, 255, 255]  # Yellow
+
+            # Create a copy of the image to modify
+            new_image_array = image_array.copy()
+
+            # Iterate over each pixel
+            for y in range(image_array.shape[0]):
+                for x in range(image_array.shape[1]):
+                    # Check if the pixel is land
+                    if np.array_equal(image_array[y, x], land_color):
+                        # Check neighbors
+                        for dy in [-1, 0, 1]:
+                            for dx in [-1, 0, 1]:
+                                if dx == 0 and dy == 0:
+                                    continue
+                                ny, nx = y + dy, x + dx
+                                if 0 <= ny < image_array.shape[0] and 0 <= nx < image_array.shape[1]:
+                                    if np.array_equal(image_array[ny, nx], water_color):
+                                        new_image_array[y, x] = beach_color
+                                        break
+                            else:
+                                continue
+                            break
+
+            # Convert back to PIL image
+            self.textured_image = Image.fromarray(new_image_array)
+
+            # Update the canvas
+            self.update_grid()
+
     def update_grid(self, event=None):
         self.canvas.delete("all") # Clear previous drawings
 
         # Determine which image to display
-        image_to_display = self.binarized_image if self.binarized_image else self.original_image
+        if self.textured_image:
+            image_to_display = self.textured_image
+        elif self.binarized_image:
+            image_to_display = self.binarized_image
+        else:
+            image_to_display = self.original_image
 
         if image_to_display:
             self.grid_cells = self.grid_slider.get()
@@ -204,3 +286,56 @@ class GridGenerator:
                     points.append((x, y))
 
                 self.canvas.create_polygon(points, outline="red", width=1, fill="")
+
+    def on_mouse_press(self, event):
+        """Records the starting coordinates of the selection."""
+        self.selection_start_x = event.x
+        self.selection_start_y = event.y
+        if self.selection_rect:
+            self.canvas.delete(self.selection_rect)
+        self.selection_rect = None
+
+    def on_mouse_drag(self, event):
+        """Draws the selection rectangle."""
+        if self.selection_rect:
+            self.canvas.delete(self.selection_rect)
+        self.selection_rect = self.canvas.create_rectangle(
+            self.selection_start_x, self.selection_start_y, event.x, event.y, outline="blue", width=2
+        )
+
+    def on_mouse_release(self, event):
+        """Creates a new window with the selected region."""
+        x1 = min(self.selection_start_x, event.x)
+        y1 = min(self.selection_start_y, event.y)
+        x2 = max(self.selection_start_x, event.x)
+        y2 = max(self.selection_start_y, event.y)
+
+        if self.display_image and (x2 - x1 > 0 and y2 - y1 > 0):
+            # Get the image displayed on the canvas
+            image_to_crop = self.textured_image or self.binarized_image or self.original_image
+
+            # Calculate crop coordinates relative to the original image size
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+            img_width, img_height = image_to_crop.size
+            ratio = min(canvas_width / img_width, canvas_height / img_height)
+            new_width = int(img_width * ratio)
+            new_height = int(img_height * ratio)
+            img_x_offset = (canvas_width - new_width) / 2
+            img_y_offset = (canvas_height - new_height) / 2
+
+            crop_x1 = (x1 - img_x_offset) / ratio
+            crop_y1 = (y1 - img_y_offset) / ratio
+            crop_x2 = (x2 - img_x_offset) / ratio
+            crop_y2 = (y2 - img_y_offset) / ratio
+
+            cropped_image = image_to_crop.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+
+            # Create a new window to display the cropped image
+            top = tk.Toplevel(self.master)
+            top.title("Selected Region")
+            canvas = tk.Canvas(top, width=cropped_image.width, height=cropped_image.height)
+            canvas.pack()
+            photo = ImageTk.PhotoImage(image=cropped_image, master=top)
+            canvas.create_image(0, 0, anchor=tk.NW, image=photo)
+            canvas.image = photo
