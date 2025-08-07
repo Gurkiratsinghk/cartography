@@ -11,13 +11,20 @@ class GridGenerator:
 
         self.image_path = None
         self.original_image = None
+        self.binarized_image = None  # To store the binarized image
         self.display_image = None
         self.grid_cells = 10  # Default number of grid cells
         self.grid_shape = "Square"  # Default grid shape
 
         # UI Elements
-        self.load_button = tk.Button(master, text="Load Image", command=self.load_image)
-        self.load_button.pack(pady=10)
+        self.top_frame = tk.Frame(master)
+        self.top_frame.pack(pady=10)
+
+        self.load_button = tk.Button(self.top_frame, text="Load Image", command=self.load_image)
+        self.load_button.pack(side=tk.LEFT, padx=5)
+
+        self.binarize_button = tk.Button(self.top_frame, text="Binarize Image", command=self.binarize_image)
+        self.binarize_button.pack(side=tk.LEFT, padx=5)
 
         self.canvas = tk.Canvas(master, bg="white")
         self.canvas.pack(expand=True, fill="both")
@@ -53,14 +60,34 @@ class GridGenerator:
         if file_path:
             self.image_path = file_path
             self.original_image = Image.open(self.image_path)
+            self.binarized_image = None # Reset binarized image on new load
             self.display_image = None  # Clear previous display image
             self.update_grid() # Call update_grid to display the loaded image
 
+    def binarize_image(self):
+        """Converts the original image to a black and white image."""
+        if self.original_image:
+            # Convert PIL image to OpenCV format
+            cv_image = np.array(self.original_image.convert('RGB'))
+            gray_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2GRAY)
 
+            # Apply binary thresholding
+            # All pixels with intensity > 127 are set to 255 (white), others to 0 (black)
+            _, binary_image = cv2.threshold(gray_image, 127, 255, cv2.THRESH_BINARY)
+
+            # Convert back to PIL image
+            self.binarized_image = Image.fromarray(binary_image)
+
+            # Update the canvas to show the binarized image
+            self.update_grid()
 
     def update_grid(self, event=None):
         self.canvas.delete("all") # Clear previous drawings
-        if self.original_image:
+
+        # Determine which image to display
+        image_to_display = self.binarized_image if self.binarized_image else self.original_image
+
+        if image_to_display:
             self.grid_cells = self.grid_slider.get()
             self.grid_shape = self.shape_var.get()
 
@@ -68,12 +95,12 @@ class GridGenerator:
             canvas_width = self.canvas.winfo_width() if self.canvas.winfo_width() > 1 else 600
             canvas_height = self.canvas.winfo_height() if self.canvas.winfo_height() > 1 else 400
 
-            img_width, img_height = self.original_image.size
+            img_width, img_height = image_to_display.size
             ratio = min(canvas_width / img_width, canvas_height / img_height)
             new_width = int(img_width * ratio)
             new_height = int(img_height * ratio)
 
-            resized_image = self.original_image.resize((new_width, new_height), Image.LANCZOS)
+            resized_image = image_to_display.resize((new_width, new_height), Image.LANCZOS)
             self.display_image = ImageTk.PhotoImage(resized_image) # Keep a reference!
             self.canvas.create_image(canvas_width / 2, canvas_height / 2, image=self.display_image, anchor=tk.CENTER) # Display the image
 
