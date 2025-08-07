@@ -4,7 +4,8 @@ from PIL import Image, ImageTk
 import cv2
 import numpy as np
 from . import image_processing
-from . import map_border
+from .enhanced_map_border import EnhancedMapBorder
+from . import fantasy_terrain_drawer
 
 class GridGenerator:
     def __init__(self, master):
@@ -63,7 +64,6 @@ class GridGenerator:
         map_menu.add_command(label="Binarize Image", command=self.binarize_image)
         map_menu.add_command(label="Generate Textures", command=self.generate_textures)
         map_menu.add_command(label="Apply Rules", command=self.apply_rules)
-        map_menu.add_command(label="Add Fantasy Terrain", command=self.add_fantasy_terrain)
         
         # View menu
         view_menu = tk.Menu(menubar, tearoff=0)
@@ -88,8 +88,7 @@ class GridGenerator:
             ("Binarize", self.binarize_image, "🔲"),
             ("Textures", self.generate_textures, "🎨"),
             ("Rules", self.apply_rules, "📏"),
-            ("Border", self.generate_border, "🗺️"),
-            ("Fantasy", self.add_fantasy_terrain, "🏔️")
+            ("Border", self.generate_border, "🗺️")
         ]
         
         for i, (text, command, emoji) in enumerate(buttons):
@@ -250,14 +249,6 @@ class GridGenerator:
         self.canvas.delete("grid_line")
         self.update_status("Grid cleared")
 
-    def add_fantasy_terrain(self):
-        """Add fantasy terrain elements"""
-        if self.textured_image or self.binarized_image:
-            # This would call a new fantasy terrain function
-            self.update_status("Fantasy terrain would be added here")
-        else:
-            messagebox.showwarning("No Map", "Please load and process a map first.")
-
     def on_mode_change(self, event):
         """Handle mode change"""
         mode = self.mode_var.get()
@@ -313,10 +304,21 @@ class GridGenerator:
         """Generates textures for the binarized image."""
         if self.binarized_image:
             try:
-                self.textured_image = image_processing.generate_textures(self.binarized_image)
+                if self.fantasy_var.get():
+                    self.update_status("Generating fantasy terrain...")
+                    base_mask = np.array(self.binarized_image)
+                    # Ensure mask is binary (0 or 255)
+                    base_mask[base_mask > 0] = 255
+                    width, height = self.binarized_image.size
+                    fantasy_map_array = fantasy_terrain_drawer.create_fantasy_terrain_overlay(base_mask, width, height)
+                    self.textured_image = Image.fromarray(fantasy_map_array)
+                    self.update_status("Fantasy terrain generated")
+                else:
+                    self.textured_image = image_processing.generate_textures(self.binarized_image)
+                    self.update_status("Textures generated")
+
                 self.update_grid()
                 self.update_info()
-                self.update_status("Textures generated")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to generate textures: {str(e)}")
         else:
@@ -340,7 +342,8 @@ class GridGenerator:
         try:
             width = max(800, self.canvas.winfo_width())
             height = max(600, self.canvas.winfo_height())
-            border_mask = map_border.generate_border(width, height)
+            border_generator = EnhancedMapBorder(width, height)
+            border_mask = border_generator.generate_continent()
             self.original_image = Image.fromarray(border_mask)
             self.binarized_image = self.original_image
             self.textured_image = None

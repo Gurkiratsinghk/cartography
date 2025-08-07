@@ -16,6 +16,203 @@ class FantasyTerrainArtist:
     def __init__(self, width: int, height: int, seed: Optional[int] = None):
         self.width = width
         self.height = height
+        if seed is not None:
+            np.random.seed(seed)
+            random.seed(seed)
+
+        # Colors for different terrain types (RGB)
+        self.terrain_colors = {
+            'land': (245, 245, 220),      # Beige
+            'water': (176, 224, 230),      # Light blue
+            'forest': (34, 139, 34),       # Forest green
+            'mountains': (139, 137, 137),   # Dark gray
+            'hills': (205, 205, 180),      # Light olive
+            'desert': (238, 203, 173),     # Peach
+            'swamp': (107, 142, 35),       # Olive drab
+            'snow': (255, 250, 250),       # Snow white
+            'roads': (139, 69, 19),        # Saddle brown
+            'settlements': (0, 0, 0)        # Black
+        }
+
+        # Line weights for different features
+        self.line_weights = {
+            'coastline': 2,
+            'rivers': 2,
+            'roads': 1,
+            'borders': 1,
+            'contours': 1
+        }
+
+    def create_fantasy_map(self, base_mask: np.ndarray, terrain_density: float = 0.7) -> np.ndarray:
+        """Create a complete fantasy map with various terrain features."""
+        # Start with base colors
+        map_image = self._create_base_map(base_mask)
+
+        # Add terrain types based on elevation and proximity
+        terrain_map = self._generate_terrain_types(base_mask)
+        map_image = self._apply_terrain_colors(map_image, terrain_map)
+
+        # Add hand-drawn style features
+        map_image = self._add_mountain_ranges(map_image, terrain_map)
+        map_image = self._add_forest_areas(map_image, terrain_map)
+        map_image = self._add_hills_and_elevation(map_image, terrain_map)
+        map_image = self._add_rivers_and_streams(map_image, base_mask)
+        map_image = self._add_roads_and_paths(map_image, base_mask)
+        map_image = self._add_settlements(map_image, base_mask)
+        map_image = self._add_decorative_elements(map_image)
+
+        # Apply hand-drawn styling effects
+        map_image = self._apply_sketchy_effects(map_image)
+
+        return map_image
+
+    def _create_base_map(self, base_mask: np.ndarray) -> np.ndarray:
+        """Create the base map with land and water."""
+        map_image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+
+        # Fill water areas
+        map_image[base_mask == 0] = self.terrain_colors['water']
+        # Fill land areas
+        map_image[base_mask == 255] = self.terrain_colors['land']
+
+        return map_image
+
+    def _generate_terrain_types(self, base_mask: np.ndarray) -> np.ndarray:
+        """Generate different terrain types based on various factors."""
+        terrain_map = np.zeros((self.height, self.width), dtype=np.uint8)
+        land_mask = base_mask == 255
+
+        # Generate elevation map using multiple noise layers
+        elevation = self._generate_elevation_map()
+
+        # Generate moisture map
+        moisture = self._generate_moisture_map(base_mask)
+
+        # Generate temperature map (latitude-based with variations)
+        temperature = self._generate_temperature_map()
+
+        # Assign terrain types based on elevation, moisture, and temperature
+        for y in range(self.height):
+            for x in range(self.width):
+                if land_mask[y, x]:
+                    elev = elevation[y, x]
+                    moist = moisture[y, x]
+                    temp = temperature[y, x]
+
+                    terrain_map[y, x] = self._classify_terrain(elev, moist, temp)
+
+        return terrain_map
+
+    def _classify_terrain(self, elevation: float, moisture: float, temperature: float) -> int:
+        """Classify terrain type based on environmental factors."""
+        # Terrain type codes
+        PLAINS = 1
+        FOREST = 2
+        HILLS = 3
+        MOUNTAINS = 4
+        DESERT = 5
+        SWAMP = 6
+        SNOW = 7
+
+        # High elevation = mountains or snow
+        if elevation > 0.8:
+            return SNOW if temperature < 0.3 else MOUNTAINS
+        elif elevation > 0.6:
+            return HILLS
+
+        # Low moisture areas
+        if moisture < 0.3:
+            return DESERT
+
+        # High moisture, low elevation
+        if moisture > 0.8 and elevation < 0.3:
+            return SWAMP
+
+        # Forest conditions
+        if moisture > 0.5 and temperature > 0.3 and temperature < 0.8:
+            return FOREST
+
+        # Default to plains
+        return PLAINS
+
+    def _generate_elevation_map(self) -> np.ndarray:
+        """Generate elevation map using multiple noise octaves."""
+        elevation = np.zeros((self.height, self.width))
+
+        # Multiple octaves for realistic elevation
+        frequencies = [0.01, 0.02, 0.04, 0.08]
+        amplitudes = [1.0, 0.5, 0.25, 0.125]
+
+        for freq, amp in zip(frequencies, amplitudes):
+            noise = np.random.random((self.height, self.width))
+            noise = gaussian_filter(noise, sigma=1/freq)
+            elevation += amp * noise
+
+        # Normalize
+        elevation = (elevation - elevation.min()) / (elevation.max() - elevation.min())
+        return elevation
+
+    def _generate_moisture_map(self, base_mask: np.ndarray) -> np.ndarray:
+        """Generate moisture map based on distance from water."""
+        # Distance from water bodies
+        water_mask = (base_mask == 0).astype(np.uint8)
+        distance_from_water = cv2.distanceTransform(1 - water_mask, cv2.DIST_L2, 5)
+
+        # Normalize and invert (closer to water = more moisture)
+        max_dist = distance_from_water.max()
+        if max_dist > 0:
+            moisture_from_water = 1 - (distance_from_water / max_dist)
+        else:
+            moisture_from_water = np.zeros_like(distance_from_water, dtype=float)
+
+
+        # Add noise for variation
+        noise = np.random.random((self.height, self.width))
+        noise = gaussian_filter(noise, sigma=20)
+
+        # Combine
+        moisture = 0.7 * moisture_from_water + 0.3 * noise
+        return np.clip(moisture, 0, 1)
+
+    def _generate_temperature_map(self) -> np.ndarray:
+        """Generate temperature map with latitude effects and local variations."""
+        temperature = np.zeros((self.height, self.width))
+
+        # Latitude effect (cooler toward poles - top and bottom of map)
+        for y in range(self.height):
+            lat_factor = 1 - 2 * abs(y - self.height/2) / self.height
+            temperature[y, :] = 0.5 + 0.4 * lat_factor
+
+        # Add local variations
+        noise = np.random.random((self.height, self.width))
+        noise = gaussian_filter(noise, sigma=30)
+        temperature += 0.3 * (noise - 0.5)
+
+        return np.clip(temperature, 0, 1)
+
+    def _apply_terrain_colors(self, map_image: np.ndarray, terrain_map: np.ndarray) -> np.ndarray:
+        """Apply colors based on terrain types."""
+        color_mapping = {
+            1: self.terrain_colors['land'],     # Plains
+            2: self.terrain_colors['forest'],   # Forest
+            3: self.terrain_colors['hills'],    # Hills
+            4: self.terrain_colors['mountains'], # Mountains
+            5: self.terrain_colors['desert'],   # Desert
+            6: self.terrain_colors['swamp'],    # Swamp
+            7: self.terrain_colors['snow']      # Snow
+        }
+
+        for terrain_type, color in color_mapping.items():
+            mask = terrain_map == terrain_type
+            map_image[mask] = color
+
+        return map_image
+
+    def _add_mountain_ranges(self, map_image: np.ndarray, terrain_map: np.ndarray) -> np.ndarray:
+        """Add hand-drawn mountain symbols."""
+        mountain_mask = (terrain_map == 4) | (terrain_map == 7)  # Mountains or snow
+        mountain_points = np.where(mountain_mask)
+
         if len(mountain_points[0]) > 0:
             # Convert to PIL for easier drawing
             pil_image = Image.fromarray(map_image)
@@ -620,197 +817,4 @@ if __name__ == "__main__":
     
     print(f"Generated fantasy map with shape {fantasy_map.shape}")
     # Optional: save result
-    # cv2.imwrite('fantasy_map_test.png', cv2.cvtColor(fantasy_map, cv2.COLOR_RGB2BGR)) seed is not None:
-            np.random.seed(seed)
-            random.seed(seed)
-        
-        # Colors for different terrain types (RGB)
-        self.terrain_colors = {
-            'land': (245, 245, 220),      # Beige
-            'water': (176, 224, 230),      # Light blue
-            'forest': (34, 139, 34),       # Forest green
-            'mountains': (139, 137, 137),   # Dark gray
-            'hills': (205, 205, 180),      # Light olive
-            'desert': (238, 203, 173),     # Peach
-            'swamp': (107, 142, 35),       # Olive drab
-            'snow': (255, 250, 250),       # Snow white
-            'roads': (139, 69, 19),        # Saddle brown
-            'settlements': (0, 0, 0)        # Black
-        }
-        
-        # Line weights for different features
-        self.line_weights = {
-            'coastline': 2,
-            'rivers': 2,
-            'roads': 1,
-            'borders': 1,
-            'contours': 1
-        }
-    
-    def create_fantasy_map(self, base_mask: np.ndarray, terrain_density: float = 0.7) -> np.ndarray:
-        """Create a complete fantasy map with various terrain features."""
-        # Start with base colors
-        map_image = self._create_base_map(base_mask)
-        
-        # Add terrain types based on elevation and proximity
-        terrain_map = self._generate_terrain_types(base_mask)
-        map_image = self._apply_terrain_colors(map_image, terrain_map)
-        
-        # Add hand-drawn style features
-        map_image = self._add_mountain_ranges(map_image, terrain_map)
-        map_image = self._add_forest_areas(map_image, terrain_map)
-        map_image = self._add_hills_and_elevation(map_image, terrain_map)
-        map_image = self._add_rivers_and_streams(map_image, base_mask)
-        map_image = self._add_roads_and_paths(map_image, base_mask)
-        map_image = self._add_settlements(map_image, base_mask)
-        map_image = self._add_decorative_elements(map_image)
-        
-        # Apply hand-drawn styling effects
-        map_image = self._apply_sketchy_effects(map_image)
-        
-        return map_image
-    
-    def _create_base_map(self, base_mask: np.ndarray) -> np.ndarray:
-        """Create the base map with land and water."""
-        map_image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        
-        # Fill water areas
-        map_image[base_mask == 0] = self.terrain_colors['water']
-        # Fill land areas
-        map_image[base_mask == 255] = self.terrain_colors['land']
-        
-        return map_image
-    
-    def _generate_terrain_types(self, base_mask: np.ndarray) -> np.ndarray:
-        """Generate different terrain types based on various factors."""
-        terrain_map = np.zeros((self.height, self.width), dtype=np.uint8)
-        land_mask = base_mask == 255
-        
-        # Generate elevation map using multiple noise layers
-        elevation = self._generate_elevation_map()
-        
-        # Generate moisture map
-        moisture = self._generate_moisture_map(base_mask)
-        
-        # Generate temperature map (latitude-based with variations)
-        temperature = self._generate_temperature_map()
-        
-        # Assign terrain types based on elevation, moisture, and temperature
-        for y in range(self.height):
-            for x in range(self.width):
-                if land_mask[y, x]:
-                    elev = elevation[y, x]
-                    moist = moisture[y, x]
-                    temp = temperature[y, x]
-                    
-                    terrain_map[y, x] = self._classify_terrain(elev, moist, temp)
-        
-        return terrain_map
-    
-    def _classify_terrain(self, elevation: float, moisture: float, temperature: float) -> int:
-        """Classify terrain type based on environmental factors."""
-        # Terrain type codes
-        PLAINS = 1
-        FOREST = 2
-        HILLS = 3
-        MOUNTAINS = 4
-        DESERT = 5
-        SWAMP = 6
-        SNOW = 7
-        
-        # High elevation = mountains or snow
-        if elevation > 0.8:
-            return SNOW if temperature < 0.3 else MOUNTAINS
-        elif elevation > 0.6:
-            return HILLS
-        
-        # Low moisture areas
-        if moisture < 0.3:
-            return DESERT
-        
-        # High moisture, low elevation
-        if moisture > 0.8 and elevation < 0.3:
-            return SWAMP
-        
-        # Forest conditions
-        if moisture > 0.5 and temperature > 0.3 and temperature < 0.8:
-            return FOREST
-        
-        # Default to plains
-        return PLAINS
-    
-    def _generate_elevation_map(self) -> np.ndarray:
-        """Generate elevation map using multiple noise octaves."""
-        elevation = np.zeros((self.height, self.width))
-        
-        # Multiple octaves for realistic elevation
-        frequencies = [0.01, 0.02, 0.04, 0.08]
-        amplitudes = [1.0, 0.5, 0.25, 0.125]
-        
-        for freq, amp in zip(frequencies, amplitudes):
-            noise = np.random.random((self.height, self.width))
-            noise = gaussian_filter(noise, sigma=1/freq)
-            elevation += amp * noise
-        
-        # Normalize
-        elevation = (elevation - elevation.min()) / (elevation.max() - elevation.min())
-        return elevation
-    
-    def _generate_moisture_map(self, base_mask: np.ndarray) -> np.ndarray:
-        """Generate moisture map based on distance from water."""
-        # Distance from water bodies
-        water_mask = (base_mask == 0).astype(np.uint8)
-        distance_from_water = cv2.distanceTransform(1 - water_mask, cv2.DIST_L2, 5)
-        
-        # Normalize and invert (closer to water = more moisture)
-        max_dist = distance_from_water.max()
-        moisture_from_water = 1 - (distance_from_water / max_dist)
-        
-        # Add noise for variation
-        noise = np.random.random((self.height, self.width))
-        noise = gaussian_filter(noise, sigma=20)
-        
-        # Combine
-        moisture = 0.7 * moisture_from_water + 0.3 * noise
-        return np.clip(moisture, 0, 1)
-    
-    def _generate_temperature_map(self) -> np.ndarray:
-        """Generate temperature map with latitude effects and local variations."""
-        temperature = np.zeros((self.height, self.width))
-        
-        # Latitude effect (cooler toward poles - top and bottom of map)
-        for y in range(self.height):
-            lat_factor = 1 - 2 * abs(y - self.height/2) / self.height
-            temperature[y, :] = 0.5 + 0.4 * lat_factor
-        
-        # Add local variations
-        noise = np.random.random((self.height, self.width))
-        noise = gaussian_filter(noise, sigma=30)
-        temperature += 0.3 * (noise - 0.5)
-        
-        return np.clip(temperature, 0, 1)
-    
-    def _apply_terrain_colors(self, map_image: np.ndarray, terrain_map: np.ndarray) -> np.ndarray:
-        """Apply colors based on terrain types."""
-        color_mapping = {
-            1: self.terrain_colors['land'],     # Plains
-            2: self.terrain_colors['forest'],   # Forest
-            3: self.terrain_colors['hills'],    # Hills
-            4: self.terrain_colors['mountains'], # Mountains
-            5: self.terrain_colors['desert'],   # Desert
-            6: self.terrain_colors['swamp'],    # Swamp
-            7: self.terrain_colors['snow']      # Snow
-        }
-        
-        for terrain_type, color in color_mapping.items():
-            mask = terrain_map == terrain_type
-            map_image[mask] = color
-        
-        return map_image
-    
-    def _add_mountain_ranges(self, map_image: np.ndarray, terrain_map: np.ndarray) -> np.ndarray:
-        """Add hand-drawn mountain symbols."""
-        mountain_mask = (terrain_map == 4) | (terrain_map == 7)  # Mountains or snow
-        mountain_points = np.where(mountain_mask)
-        
-        if
+    cv2.imwrite('fantasy_map_test.png', cv2.cvtColor(fantasy_map, cv2.COLOR_RGB2BGR))
