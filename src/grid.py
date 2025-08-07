@@ -16,7 +16,9 @@ class GridGenerator:
         self.grid_cells = 10  # Default number of grid cells
         self.grid_shape = "Square"  # Default grid shape
 
-        # UI Elements
+        # --- UI Elements ---
+
+        # Top frame for buttons
         self.top_frame = tk.Frame(master)
         self.top_frame.pack(pady=10)
 
@@ -30,12 +32,15 @@ class GridGenerator:
         self.invert_checkbox = tk.Checkbutton(self.top_frame, text="Invert Binarization", var=self.invert_var, command=self.binarize_image)
         self.invert_checkbox.pack(side=tk.LEFT, padx=5)
 
+        # Canvas for displaying the image and grid
         self.canvas = tk.Canvas(master, bg="white")
         self.canvas.pack(expand=True, fill="both")
 
+        # Frame for grid controls
         self.control_frame = tk.Frame(master)
         self.control_frame.pack(pady=10)
 
+        # Slider for controlling the number of grid cells
         self.slider_label = tk.Label(self.control_frame, text="Grid Cells:")
         self.slider_label.pack(side=tk.LEFT, padx=5)
 
@@ -47,6 +52,7 @@ class GridGenerator:
         self.shape_label = tk.Label(self.control_frame, text="Grid Shape:")
         self.shape_label.pack(side=tk.LEFT, padx=5)
 
+        # Dropdown for selecting the grid shape
         self.shape_options = ["Square", "Hexagon"]
         self.shape_var = tk.StringVar(master)
         self.shape_var.set(self.grid_shape)
@@ -141,47 +147,47 @@ class GridGenerator:
 
     def _draw_hexagon_grid(self, width, height, x_offset, y_offset):
         """Draws a hexagonal grid over the image with proper tessellation."""
-        
+
         # Use the original approach but with corrected geometry
         hex_count_in_row = self.grid_cells
-        
+
         # For pointy-top hexagons:
         # hex_width = sqrt(3) * side_length
         # hex_height = 2 * side_length
         hex_width = width / hex_count_in_row
         side_length = hex_width / np.sqrt(3)
         hex_height = 2 * side_length
-        
+
         # Correct spacing for proper tessellation
         horizontal_spacing = hex_width
         vertical_spacing = hex_height * 0.75   # 3/4 of height
-        
+
         # Calculate number of rows needed
         num_rows = int(height / vertical_spacing) + 2
-        
+
         # Start from top-left, slightly outside to ensure coverage
         start_x = x_offset
         start_y = y_offset
-        
+
         for row in range(num_rows):
             # Calculate y position for this row
             center_y = start_y + row * vertical_spacing
-            
+
             # Stop if we're too far below the image
             if center_y > y_offset + height + hex_height/2:
                 break
 
             # Stagger odd rows by half horizontal spacing
             row_offset_x = hex_width/2 if row % 2 == 1 else 0
-            
+
             # Calculate how many hexagons fit in this row
             effective_width = width + hex_width  # Add some buffer
             hex_count_this_row = int(effective_width / horizontal_spacing) + 1
-            
+
             for col in range(hex_count_this_row):
                 # Calculate x position for this hexagon
                 center_x = start_x + col * horizontal_spacing + row_offset_x
-                
+
                 # Skip if completely outside image bounds
                 if (center_x < x_offset - hex_width/2 or
                     center_x > x_offset + width + hex_width/2 or
@@ -196,9 +202,5 @@ class GridGenerator:
                     x = center_x + side_length * np.cos(angle_rad)
                     y = center_y + side_length * np.sin(angle_rad)
                     points.append((x, y))
-                
-                self.canvas.create_polygon(points, outline="red", width=1, fill="")
 
-root = tk.Tk()
-app = GridGenerator(root)
-root.mainloop()
+                self.canvas.create_polygon(points, outline="red", width=1, fill="")
