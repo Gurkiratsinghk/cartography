@@ -26,6 +26,10 @@ class GridGenerator:
         self.binarize_button = tk.Button(self.top_frame, text="Binarize Image", command=self.binarize_image)
         self.binarize_button.pack(side=tk.LEFT, padx=5)
 
+        self.invert_var = tk.BooleanVar()
+        self.invert_checkbox = tk.Checkbutton(self.top_frame, text="Invert Binarization", var=self.invert_var, command=self.binarize_image)
+        self.invert_checkbox.pack(side=tk.LEFT, padx=5)
+
         self.canvas = tk.Canvas(master, bg="white")
         self.canvas.pack(expand=True, fill="both")
 
@@ -71,9 +75,19 @@ class GridGenerator:
             cv_image = np.array(self.original_image.convert('RGB'))
             gray_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2GRAY)
 
-            # Apply binary thresholding
-            # All pixels with intensity > 127 are set to 255 (white), others to 0 (black)
-            _, binary_image = cv2.threshold(gray_image, 127, 255, cv2.THRESH_BINARY)
+            # Apply adaptive thresholding. The parameters are:
+            # - gray_image: The input image.
+            # - 255: The maximum value to use.
+            # - cv2.ADAPTIVE_THRESH_GAUSSIAN_C: The adaptive thresholding algorithm.
+            # - cv2.THRESH_BINARY: The thresholding type.
+            # - 11: The block size (neighborhood area).
+            # - 2: The constant subtracted from the mean.
+            binary_image = cv2.adaptiveThreshold(gray_image, 255,
+                                                 cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                                 cv2.THRESH_BINARY, 11, 2)
+
+            if self.invert_var.get():
+                binary_image = cv2.bitwise_not(binary_image)
 
             # Convert back to PIL image
             self.binarized_image = Image.fromarray(binary_image)
@@ -126,127 +140,64 @@ class GridGenerator:
                 self.canvas.create_rectangle(x1, y1, x2, y2, outline="red", width=1)
 
     def _draw_hexagon_grid(self, width, height, x_offset, y_offset):
-        """Draws a hexagonal grid over the image with proper positioning."""
+        """Draws a hexagonal grid over the image with proper tessellation."""
         
-        # Calculate hexagon dimensions based on grid_cells
-        # The grid_cells value determines how many hexagons fit horizontally in the widest row
-        hex_count_horizontal = self.grid_cells
+        # Use the original approach but with corrected geometry
+        hex_count_in_row = self.grid_cells
         
-        # Calculate hexagon size to fit the specified number horizontally
-        # For a pointy-top hexagon, the width is 2 * side_length
-        hex_width = width / hex_count_horizontal
-        side_length = hex_width / 2
+        # For pointy-top hexagons:
+        # hex_width = sqrt(3) * side_length
+        # hex_height = 2 * side_length
+        hex_width = width / hex_count_in_row
+        side_length = hex_width / np.sqrt(3)
+        hex_height = 2 * side_length
         
-        # Height of a pointy-top hexagon is sqrt(3) * side_length
-        hex_height = np.sqrt(3) * side_length
+        # Correct spacing for proper tessellation
+        horizontal_spacing = hex_width
+        vertical_spacing = hex_height * 0.75   # 3/4 of height
         
-        # Vertical distance between row centers (3/4 of hex height for proper tessellation)
-        row_spacing = hex_height * 0.75
+        # Calculate number of rows needed
+        num_rows = int(height / vertical_spacing) + 2
         
-        # Calculate number of rows that fit in the image height
-        num_rows = max(1, int((height - hex_height) / row_spacing) + 1)
+        # Start from top-left, slightly outside to ensure coverage
+        start_x = x_offset
+        start_y = y_offset
         
-        # Calculate total grid height and center it vertically
-        total_grid_height = (num_rows - 1) * row_spacing + hex_height
-        grid_y_start = y_offset + (height - total_grid_height) / 2
-        
-        # Draw hexagons row by row
         for row in range(num_rows):
             # Calculate y position for this row
-            row_y = grid_y_start + row * row_spacing + hex_height / 2
+            center_y = start_y + row * vertical_spacing
             
-            # Determine horizontal offset and count for this row
-            if row % 2 == 0:
-                # Even rows: no offset, full count
-                row_x_offset = 0
-                hex_count_this_row = hex_count_horizontal
-            else:
-                # Odd rows: offset by half hex width, one less hexagon
-                row_x_offset = hex_width / 2
-                hex_count_this_row = hex_count_horizontal - 1
+            # Stop if we're too far below the image
+            if center_y > y_offset + height + hex_height/2:
+                break
+
+            # Stagger odd rows by half horizontal spacing
+            row_offset_x = hex_width/2 if row % 2 == 1 else 0
             
-            # Calculate starting x position for this row
-            row_x_start = x_offset + row_x_offset + hex_width / 2
+            # Calculate how many hexagons fit in this row
+            effective_width = width + hex_width  # Add some buffer
+            hex_count_this_row = int(effective_width / horizontal_spacing) + 1
             
-            # Draw hexagons in this row
             for col in range(hex_count_this_row):
-                center_x = row_x_start + col * hex_width
-                center_y = row_y
+                # Calculate x position for this hexagon
+                center_x = start_x + col * horizontal_spacing + row_offset_x
                 
-                # Generate hexagon vertices (pointy-top orientation)
+                # Skip if completely outside image bounds
+                if (center_x < x_offset - hex_width/2 or
+                    center_x > x_offset + width + hex_width/2 or
+                    center_y < y_offset - hex_height/2 or
+                    center_y > y_offset + height + hex_height/2):
+                    continue
+
+                # Draw the hexagon
                 points = []
                 for i in range(6):
-                    # Start at top point (-90 degrees) and go clockwise
-                    angle_rad = np.deg2rad(60 * i - 90)
+                    angle_rad = np.deg2rad(60 * i + 30)  # +30 for pointy-top
                     x = center_x + side_length * np.cos(angle_rad)
                     y = center_y + side_length * np.sin(angle_rad)
-                    points.extend([x, y])  # Flatten coordinates for tkinter
+                    points.append((x, y))
                 
-                # Draw the hexagon
                 self.canvas.create_polygon(points, outline="red", width=1, fill="")
-                
-                # Optional: Add coordinate labels for debugging
-                # self.canvas.create_text(center_x, center_y, text=f"{row},{col}", 
-                #                        font=("Arial", 8), fill="blue")
-    # def _draw_hexagon_grid(self, width, height, x_offset, y_offset):
-    #     """Draws a hexagonal grid over the image with proper tessellation."""
-        
-    #     # Use the original approach but with corrected geometry
-    #     hex_count_in_row = self.grid_cells
-        
-    #     # For pointy-top hexagons:
-    #     # hex_width = sqrt(3) * side_length
-    #     # hex_height = 2 * side_length
-    #     hex_width = width / hex_count_in_row
-    #     side_length = hex_width / np.sqrt(3)
-    #     hex_height = 2 * side_length
-        
-    #     # Correct spacing for proper tessellation
-    #     horizontal_spacing = hex_width * 0.75  # 3/4 of width
-    #     vertical_spacing = hex_height * 0.75   # 3/4 of height
-        
-    #     # Calculate number of rows needed
-    #     num_rows = int(height / vertical_spacing) + 2
-        
-    #     # Start from top-left, slightly outside to ensure coverage
-    #     start_x = x_offset
-    #     start_y = y_offset
-        
-    #     for row in range(num_rows):
-    #         # Calculate y position for this row
-    #         center_y = start_y + row * vertical_spacing
-            
-    #         # Stop if we're too far below the image
-    #         if center_y > y_offset + height + hex_height/2:
-    #             break
-                
-    #         # Stagger odd rows by half horizontal spacing
-    #         row_offset_x = horizontal_spacing / 2 if row % 2 == 1 else 0
-            
-    #         # Calculate how many hexagons fit in this row
-    #         effective_width = width + hex_width  # Add some buffer
-    #         hex_count_this_row = int(effective_width / horizontal_spacing) + 1
-            
-    #         for col in range(hex_count_this_row):
-    #             # Calculate x position for this hexagon
-    #             center_x = start_x + col * horizontal_spacing + row_offset_x
-                
-    #             # Skip if completely outside image bounds
-    #             if (center_x < x_offset - hex_width/2 or 
-    #                 center_x > x_offset + width + hex_width/2 or
-    #                 center_y < y_offset - hex_height/2 or 
-    #                 center_y > y_offset + height + hex_height/2):
-    #                 continue
-                
-    #             # Draw the hexagon
-    #             points = []
-    #             for i in range(6):
-    #                 angle_rad = np.deg2rad(60 * i + 30)  # +30 for pointy-top
-    #                 x = center_x + side_length * np.cos(angle_rad)
-    #                 y = center_y + side_length * np.sin(angle_rad)
-    #                 points.append((x, y))
-                
-    #             self.canvas.create_polygon(points, outline="red", width=1, fill="")
 
 root = tk.Tk()
 app = GridGenerator(root)
